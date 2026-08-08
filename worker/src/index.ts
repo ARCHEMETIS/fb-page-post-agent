@@ -1,5 +1,5 @@
 import { postDraftToDiscord, editOriginalInteraction } from "./discord";
-import { publishToFacebook } from "./facebook";
+import { FacebookPublishError, publishToFacebook } from "./facebook";
 import { appendHistory, readHistory } from "./history";
 import type { Env, StoredDraft } from "./types";
 import { requireEnv, secretsMatch, truncate } from "./utils";
@@ -10,9 +10,13 @@ interface SubmitDraftBody {
 }
 
 interface DiscordInteraction {
+  id?: string;
   type: number;
   application_id?: string;
   token?: string;
+  channel_id?: string;
+  member?: { user?: { id?: string } };
+  user?: { id?: string };
   data?: { custom_id?: string; name?: string };
 }
 
@@ -85,6 +89,19 @@ async function listDraftKeys(env: Env): Promise<string[]> {
   return names;
 }
 
+async function listDrafts(env: Env): Promise<Array<{ id: string; draft: StoredDraft }>> {
+  const keys = await listDraftKeys(env);
+  const drafts = await Promise.all(
+    keys.map(async (key) => ({
+      id: key.slice("draft:".length),
+      draft: await env.DRAFTS.get<StoredDraft>(key, "json"),
+    })),
+  );
+  return drafts.filter(
+    (entry): entry is { id: string; draft: StoredDraft } => entry.draft !== null,
+  );
+}
+
 async function handleSubmitDraft(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return methodNotAllowed("POST");
 
@@ -120,6 +137,7 @@ async function handleSubmitDraft(request: Request, env: Env): Promise<Response> 
     text: body.text,
     title: body.image.title,
     createdAt: new Date().toISOString(),
+    status: "pending",
   };
 
   try {
@@ -173,12 +191,18 @@ function ephemeral(content: string): Response {
 
 async function handleCommand(name: string | undefined, env: Env): Promise<Response> {
   if (name === "status") {
-    const draftCount = (await listDraftKeys(env)).length;
+    const drafts = await listDrafts(env);
+    const pendingCount = drafts.filter(({ draft }) => draft.status === "pending").length;
+    const publishedCount = drafts.filter(({ draft }) => draft.status === "published").length;
+    const unknownCount = drafts.filter(({ draft }) => draft.status === "unknown").length;
     const facebookStatus = env.FACEBOOK_PAGE_ID && env.FACEBOOK_PAGE_ACCESS_TOKEN
       ? "configured"
       : "not configured";
+    const unknownWarning = unknownCount > 0
+      ? `WARNING: ${unknownCount} draft${unknownCount === 1 ? " is" : "s are"} in unknown state and require${unknownCount === 1 ? "s" : ""} a manual Page check. `
+      : "";
     return ephemeral(
-      `${draftCount} draft${draftCount === 1 ? "" : "s"} awaiting approval. Facebook publishing: ${facebookStatus}.`,
+      `${unknownWarning}${pendingCount} draft${pendingCount === 1 ? "" : "s"} awaiting approval. ${publishedCount} published. Facebook publishing: ${facebookStatus}.`,
     );
   }
 
@@ -189,20 +213,11 @@ async function handleCommand(name: string | undefined, env: Env): Promise<Respon
   }
 
   if (name === "pending") {
-    const keys = await listDraftKeys(env);
-    const drafts = await Promise.all(
-      keys.map(async (key) => ({
-        id: key.slice("draft:".length),
-        draft: await env.DRAFTS.get<StoredDraft>(key, "json"),
-      })),
-    );
-    const existing = drafts.filter(
-      (entry): entry is { id: string; draft: StoredDraft } => entry.draft !== null,
-    );
-    if (existing.length === 0) return ephemeral("No drafts are awaiting approval.");
-    existing.sort((left, right) => left.draft.createdAt.localeCompare(right.draft.createdAt));
+    const pending = (await listDrafts(env)).filter(({ draft }) => draft.status === "pending");
+    if (pending.length === 0) return ephemeral("No drafts are awaiting approval.");
+    pending.sort((left, right) => left.draft.createdAt.localeCompare(right.draft.createdAt));
     return ephemeral(
-      existing
+      pending
         .map(({ id, draft }) => `${id.slice(0, 8)} | ${draft.createdAt} | ${truncate(draft.text, 60)}`)
         .join("\n"),
     );
@@ -216,6 +231,15 @@ function publishingError(error: unknown): string {
   return truncate(`Publishing failed: ${message}`, 2_000);
 }
 
+function draftStateMessage(draft: StoredDraft): string {
+  if (draft.status === "published") {
+    return `Already published to Facebook Page (post id: ${draft.postId ?? "not recorded"}).`;
+  }
+  if (draft.status === "publishing") return "This draft is currently publishing.";
+  if (draft.status === "rejected") return "This draft was rejected.";
+  return "This draft needs a manual Page check before it can be retried.";
+}
+
 async function processComponent(
   env: Env,
   action: string,
@@ -227,19 +251,36 @@ async function processComponent(
   const draft = await env.DRAFTS.get<StoredDraft>(key, "json");
 
   if (!draft) {
-    await editOriginalInteraction(applicationId, interactionToken, "Draft is gone or already handled.");
+    await editOriginalInteraction(applicationId, interactionToken, "Draft was not found.");
+    return;
+  }
+
+  if (draft.status !== "pending") {
+    await editOriginalInteraction(applicationId, interactionToken, draftStateMessage(draft));
     return;
   }
 
   if (action === "reject") {
-    await env.DRAFTS.delete(key);
+    await env.DRAFTS.put(key, JSON.stringify({ ...draft, status: "rejected" } satisfies StoredDraft));
     await editOriginalInteraction(applicationId, interactionToken, "Rejected");
     return;
   }
 
+  // KV is eventually consistent, so this claim narrows the duplicate window but cannot eliminate
+  // it. The retained ledger and manual `unknown` state are what prevent an unsafe double post.
+  const publishingDraft: StoredDraft = { ...draft, status: "publishing", error: undefined };
+  await env.DRAFTS.put(key, JSON.stringify(publishingDraft));
+
   try {
     const { postId } = await publishToFacebook(env, draft);
-    await env.DRAFTS.delete(key);
+    const publishedDraft: StoredDraft = {
+      ...draft,
+      status: "published",
+      postId,
+      publishedAt: new Date().toISOString(),
+      error: undefined,
+    };
+    await env.DRAFTS.put(key, JSON.stringify(publishedDraft));
     await editOriginalInteraction(
       applicationId,
       interactionToken,
@@ -247,7 +288,30 @@ async function processComponent(
     );
   } catch (error) {
     console.error("Facebook publishing failed", error);
-    await editOriginalInteraction(applicationId, interactionToken, publishingError(error));
+    const message = error instanceof Error ? error.message : "Unknown error";
+    if (error instanceof FacebookPublishError && error.outcome === "definite") {
+      await env.DRAFTS.put(
+        key,
+        JSON.stringify({ ...draft, status: "pending", error: message } satisfies StoredDraft),
+      );
+      await editOriginalInteraction(
+        applicationId,
+        interactionToken,
+        publishingError(error),
+        false,
+      );
+      return;
+    }
+
+    await env.DRAFTS.put(
+      key,
+      JSON.stringify({ ...draft, status: "unknown", error: message } satisfies StoredDraft),
+    );
+    await editOriginalInteraction(
+      applicationId,
+      interactionToken,
+      "Facebook publishing may have succeeded. Check the Page by hand before retrying.",
+    );
   }
 }
 
@@ -290,9 +354,21 @@ async function handleDiscordInteraction(
   if (body.type === 3 && body.data?.custom_id) {
     const match = /^(approve|reject):([0-9a-f-]+)$/i.exec(body.data.custom_id);
     if (!match) return new Response("Unsupported component", { status: 400 });
-    if (!body.application_id || !body.token) {
+    if (!body.id || !body.application_id || !body.token) {
       return new Response("Invalid component interaction", { status: 400 });
     }
+
+    const invokingUserId = body.member?.user?.id ?? body.user?.id;
+    if (
+      invokingUserId !== env.APPROVER_USER_ID ||
+      body.channel_id !== env.DISCORD_CHANNEL_ID
+    ) {
+      return ephemeral("Only the owner can approve or reject.");
+    }
+
+    const seenKey = `seen:${body.id}`;
+    if (await env.DRAFTS.get(seenKey)) return Response.json({ type: 6 });
+    await env.DRAFTS.put(seenKey, "1", { expirationTtl: 900 });
 
     const [, rawAction, id] = match;
     const action = rawAction.toLowerCase();

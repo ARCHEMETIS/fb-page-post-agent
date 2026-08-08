@@ -1,18 +1,28 @@
-name: Publish pending drafts
+name: Deliver drafts and questions
 
+# The writing agent's sandbox blocks outbound HTTP, so pushing to this repo is the only way it
+# can reach anything. This workflow is that bridge: it forwards finished drafts to the Worker,
+# and forwards the agent's questions — the ones it raises instead of inventing a personal detail
+# it doesn't know — straight to Discord.
 on:
   push:
     branches:
       - master
     paths:
       - "drafts/pending/**"
+      - "needs-input/**"
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Two pushes in quick succession must not race each other into submitting the same draft twice.
+concurrency:
+  group: deliver-drafts
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  deliver:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -29,17 +39,26 @@ jobs:
           SUBMIT_ENDPOINT: ${{ vars.SUBMIT_ENDPOINT }}
           SUBMIT_DRAFT_SECRET: ${{ secrets.SUBMIT_DRAFT_SECRET }}
 
+      # Runs even when the step above failed: a question is independent of a draft, and the
+      # owner should still hear it.
+      - name: Send questions to Discord
+        if: always()
+        run: node scripts/send-questions.mjs
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ vars.DISCORD_CHANNEL_ID }}
+
       # Commits pushed with the default GITHUB_TOKEN do not trigger another workflow run.
-      - name: Commit submitted drafts
+      - name: Commit moved files
         if: always()
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add drafts/
+          git add drafts/ needs-input/ 2>/dev/null || true
           if git diff --cached --quiet; then
-            echo "No draft changes to commit."
+            echo "Nothing to commit."
           else
-            git commit -m "Move drafts to submitted"
+            git commit -m "Move delivered drafts and questions"
             git push
           fi

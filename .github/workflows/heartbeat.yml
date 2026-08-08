@@ -1,0 +1,72 @@
+name: Draft heartbeat
+
+# The scheduled writing agent runs at 07:30 Asia/Bangkok (00:30 UTC). If it fails, is throttled,
+# loses its GitHub push permission, or is quietly disabled, nothing happens and nothing complains —
+# the failure is invisible until someone notices the page has gone quiet. This job is the alarm:
+# it checks that today produced a draft and says so in Discord when it did not.
+on:
+  schedule:
+    # 02:00 UTC = 09:00 Asia/Bangkok, ~90 minutes after the agent should have finished.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Look for a draft dated today
+        id: look
+        shell: bash
+        run: |
+          # The agent names files drafts/<state>/YYYY-MM-DD-<slug>.json, so the date prefix is
+          # the marker. Use Bangkok's date, not the runner's UTC date, or the check is a day off.
+          today="$(TZ=Asia/Bangkok date +%F)"
+          echo "date=$today" >> "$GITHUB_OUTPUT"
+          if ls drafts/pending/"$today"-*.json drafts/submitted/"$today"-*.json >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Alert Discord when today produced nothing
+        if: steps.look.outputs.found == 'false'
+        shell: bash
+        env:
+          BOT: ${{ secrets.DISCORD_BOT_TOKEN }}
+          CHANNEL: ${{ vars.DISCORD_CHANNEL_ID }}
+          DAY: ${{ steps.look.outputs.date }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$BOT" ] || [ -z "$CHANNEL" ]; then
+            echo "::error::DISCORD_BOT_TOKEN secret or DISCORD_CHANNEL_ID variable is not set."
+            exit 1
+          fi
+          # allowed_mentions is empty on purpose: an alarm should not ping a channel.
+          payload=$(DAY="$DAY" RUN_URL="$RUN_URL" node -e '
+            const text = [
+              "⚠️ ไม่มี draft ของวันที่ " + process.env.DAY,
+              "agent ที่ควรรันตอน 07:30 อาจไม่ได้ทำงาน หรือ push ไม่สำเร็จ",
+              process.env.RUN_URL,
+            ].join("\n");
+            process.stdout.write(JSON.stringify({ content: text, allowed_mentions: { parse: [] } }));
+          ')
+          code=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bot $BOT" \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "https://discord.com/api/v10/channels/$CHANNEL/messages")
+          if [ "$code" != "200" ]; then
+            echo "::error::Discord returned $code"
+            head -c 500 /tmp/resp.json
+            exit 1
+          fi
+          echo "Alert sent for $DAY."
+
+      - name: Report when today is fine
+        if: steps.look.outputs.found == 'true'
+        run: echo "Draft for ${{ steps.look.outputs.date }} exists. Nothing to report."

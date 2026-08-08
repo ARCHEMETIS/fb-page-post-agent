@@ -47,13 +47,17 @@ export async function editOriginalInteraction(
   applicationId: string,
   interactionToken: string,
   content: string,
+  clearComponents = true,
 ): Promise<void> {
   const response = await fetch(
     `https://discord.com/api/v10/webhooks/${encodeURIComponent(applicationId)}/${encodeURIComponent(interactionToken)}/messages/@original`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: truncate(content, 2_000), components: [] }),
+      body: JSON.stringify({
+        content: truncate(content, 2_000),
+        ...(clearComponents ? { components: [] } : {}),
+      }),
     },
   );
 
