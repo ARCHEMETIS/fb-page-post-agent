@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { Resvg } from "@resvg/resvg-js";
+import { Resvg, initWasm } from "@resvg/resvg-wasm";
 import satori from "satori";
 
 export interface CardInput {
@@ -13,8 +13,19 @@ const interFont = readFile(new URL("./inter-latin-400-normal.woff", import.meta.
   (font) => font.buffer.slice(font.byteOffset, font.byteOffset + font.byteLength) as ArrayBuffer,
 );
 
+// resvg-js's native binding only ships a build for the platform it was `npm install`-ed on
+// (Windows here), which breaks at runtime on Netlify's Linux functions. The WASM build has
+// no platform-specific binary, so it works identically in local dev and when deployed.
+let wasmReady: Promise<void> | undefined;
+function ensureWasmInit(): Promise<void> {
+  if (!wasmReady) {
+    wasmReady = readFile(new URL("./resvg.wasm", import.meta.url)).then((wasm) => initWasm(wasm));
+  }
+  return wasmReady;
+}
+
 export async function renderCard({ title, subtitle, sourceUrl }: CardInput): Promise<Buffer> {
-  const fontData = await interFont;
+  const [fontData] = await Promise.all([interFont, ensureWasmInit()]);
   const svg = await satori(
     {
       type: "div",

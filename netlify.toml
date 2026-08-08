@@ -2,4 +2,7 @@
   functions = "netlify/functions"
 
 [functions]
-  included_files = ["netlify/functions/_shared/inter-latin-400-normal.woff"]
+  included_files = [
+    "netlify/functions/_shared/inter-latin-400-normal.woff",
+    "netlify/functions/_shared/resvg.wasm",
+  ]
