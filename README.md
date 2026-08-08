@@ -61,3 +61,12 @@ npm run typecheck
 ```
 
 Live Discord and Facebook publishing require real credentials and a Discord bot that can send messages and attach files in the configured channel.
+
+## GitHub Actions draft bridge
+
+The scheduled cloud agent cannot make outbound requests to the Netlify domain from its sandbox, but it can commit and push files to GitHub. It writes each finished JSON draft to `drafts/pending/`; the `Publish pending drafts` workflow then sends pending drafts to the already-deployed `/submit-draft` endpoint and moves successful files to `drafts/posted/`. See `drafts/README.md` for the file contract and an example.
+
+Configure these repository settings before using the workflow:
+
+- Actions secret `SUBMIT_DRAFT_SECRET`: the API key expected by the live endpoint.
+- Actions variable `SUBMIT_ENDPOINT`: the full live URL, `https://archemetis-fb-approval.netlify.app/submit-draft`.
