@@ -1,0 +1,8 @@
+{
+  "text": "🧪 ทดสอบ bridge: ข้อความนี้ถูกเขียนเป็นไฟล์ใน GitHub repo แล้ว GitHub Actions ยิงต่อเข้า Netlify → Discord โดยไม่ผ่าน sandbox ที่โดนบล็อก ถ้าเห็นข้อความนี้พร้อมรูปการ์ดและปุ่ม Approve/Reject แปลว่าเส้นทางใหม่ใช้งานได้จริงแล้ว",
+  "image": {
+    "title": "Bridge ทำงานแล้ว",
+    "subtitle": "GitHub Actions → Netlify → Discord",
+    "sourceUrl": "github.com/ARCHEMETIS/fb-page-post-agent"
+  }
+}
