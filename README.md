@@ -2,6 +2,10 @@
 
 This is a small, functions-only Netlify backend for a human approval step between an external content-writing agent and a Facebook Page. It does not research trends or write content, and it has no frontend.
 
+## Cloudflare migration
+
+`worker/` is the new Cloudflare Workers backend and is the version intended for future deployments. It ports the behavior below to a single module Worker backed by Cloudflare KV. `netlify/` remains unchanged as the frozen, battle-tested reference implementation because the Netlify account ran out of credits and can no longer be redeployed. See `worker/README.md` for Cloudflare setup and migration instructions.
+
 ## Flow
 
 1. Before writing a draft, the external scheduled agent can call `GET /post-history` (same `x-api-key`) to see the last 30 submitted topics, to avoid repeating itself.
