@@ -9,7 +9,10 @@ export interface CardInput {
   sourceUrl?: string;
 }
 
-const interFont = readFile(new URL("./inter-latin-400-normal.woff", import.meta.url)).then(
+// Netlify's function bundler flattens this module into netlify/functions/{name}.mjs,
+// so at runtime import.meta.url points at the function's own directory, not _shared/ —
+// hence the "_shared/" prefix here even though this file itself lives in _shared/.
+const interFont = readFile(new URL("./_shared/inter-latin-400-normal.woff", import.meta.url)).then(
   (font) => font.buffer.slice(font.byteOffset, font.byteOffset + font.byteLength) as ArrayBuffer,
 );
 
@@ -19,7 +22,7 @@ const interFont = readFile(new URL("./inter-latin-400-normal.woff", import.meta.
 let wasmReady: Promise<void> | undefined;
 function ensureWasmInit(): Promise<void> {
   if (!wasmReady) {
-    wasmReady = readFile(new URL("./resvg.wasm", import.meta.url)).then((wasm) => initWasm(wasm));
+    wasmReady = readFile(new URL("./_shared/resvg.wasm", import.meta.url)).then((wasm) => initWasm(wasm));
   }
   return wasmReady;
 }
