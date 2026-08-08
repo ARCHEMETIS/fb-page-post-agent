@@ -1,9 +1,8 @@
 import { postDraftToDiscord, editOriginalInteraction } from "./discord";
 import { publishToFacebook } from "./facebook";
 import { appendHistory, readHistory } from "./history";
-import { renderCard } from "./image-card";
 import type { Env, StoredDraft } from "./types";
-import { bytesToBase64, requireEnv, secretsMatch, truncate } from "./utils";
+import { requireEnv, secretsMatch, truncate } from "./utils";
 
 interface SubmitDraftBody {
   text: string;
@@ -115,20 +114,30 @@ async function handleSubmitDraft(request: Request, env: Env): Promise<Response> 
     );
   }
 
-  try {
-    const imagePng = await renderCard(body.image);
-    const id = crypto.randomUUID();
-    const draft: StoredDraft = {
-      text: body.text,
-      imagePng: bytesToBase64(imagePng),
-      createdAt: new Date().toISOString(),
-    };
+  const id = crypto.randomUUID();
+  const key = `draft:${id}`;
+  const draft: StoredDraft = {
+    text: body.text,
+    title: body.image.title,
+    createdAt: new Date().toISOString(),
+  };
 
-    await env.DRAFTS.put(`draft:${id}`, JSON.stringify(draft));
-    await postDraftToDiscord(env, id, body.text, imagePng);
+  try {
+    // The draft must exist before the buttons referencing it do, otherwise a fast click finds
+    // nothing. If Discord then fails, roll the write back so the key can't be orphaned — a
+    // retry would otherwise leave a second copy behind with no message pointing at it.
+    await env.DRAFTS.put(key, JSON.stringify(draft));
+    try {
+      await postDraftToDiscord(env, id, body.text);
+    } catch (discordError) {
+      await env.DRAFTS.delete(key).catch((cleanupError) => {
+        console.error("Orphaned draft left in KV", key, cleanupError);
+      });
+      throw discordError;
+    }
 
     try {
-      await appendHistory(env, { date: draft.createdAt, title: body.image.title, text: body.text });
+      await appendHistory(env, { date: draft.createdAt, title: draft.title, text: draft.text });
     } catch (historyError) {
       console.error("Unable to append post history", historyError);
     }

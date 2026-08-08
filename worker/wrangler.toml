@@ -8,8 +8,3 @@ id = "0771efc0a7304a7aa2f83a118a86269a"
 
 [vars]
 DISCORD_CHANNEL_ID = "1535565515572117576"
-
-[[rules]]
-type = "Data"
-globs = ["**/*.woff"]
-fallthrough = true

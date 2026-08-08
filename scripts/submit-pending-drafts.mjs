@@ -20,7 +20,7 @@ if (missingEnvironmentVariables.length > 0) {
 
 async function submitPendingDrafts() {
   const pendingDirectory = path.resolve("drafts", "pending");
-  const postedDirectory = path.resolve("drafts", "posted");
+  const submittedDirectory = path.resolve("drafts", "submitted");
   let entries;
 
   try {
@@ -106,11 +106,11 @@ async function submitPendingDrafts() {
     console.log(`${filename}: submitted successfully (id: ${returnedId})`);
 
     try {
-      await mkdir(postedDirectory, { recursive: true });
-      const destination = await availableDestination(postedDirectory, filename);
+      await mkdir(submittedDirectory, { recursive: true });
+      const destination = await availableDestination(submittedDirectory, filename);
       await rename(pendingPath, destination);
     } catch (error) {
-      console.error(`${filename}: submitted but could not move to posted/ (${formatError(error)})`);
+      console.error(`${filename}: submitted but could not move to submitted/ (${formatError(error)})`);
       failed += 1;
     }
   }

@@ -30,7 +30,7 @@ jobs:
           SUBMIT_DRAFT_SECRET: ${{ secrets.SUBMIT_DRAFT_SECRET }}
 
       # Commits pushed with the default GITHUB_TOKEN do not trigger another workflow run.
-      - name: Commit posted drafts
+      - name: Commit submitted drafts
         if: always()
         shell: bash
         run: |
@@ -40,6 +40,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No draft changes to commit."
           else
-            git commit -m "Move submitted drafts to posted"
+            git commit -m "Move drafts to submitted"
             git push
           fi

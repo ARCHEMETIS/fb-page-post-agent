@@ -1,6 +1,6 @@
 # Draft file contract
 
-Writers—whether human or automated—place each finished Facebook draft in `drafts/pending/` as a UTF-8 JSON file. The GitHub Actions workflow submits pending files in filename order. After a successful submission, it moves the file to `drafts/posted/` and commits that move. Invalid or failed submissions stay in `pending/` for correction or retry.
+Writers—whether human or automated—place each finished Facebook draft in `drafts/pending/` as a UTF-8 JSON file. The GitHub Actions workflow submits pending files in filename order. After a successful submission, it moves the file to `drafts/submitted/` and commits that move. Invalid or failed submissions stay in `pending/` for correction or retry.
 
 Each file must have this shape:
 

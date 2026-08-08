@@ -1,76 +1,77 @@
-# Facebook Page approval backend
+# fb-page-post-agent
 
-This is a small, functions-only Netlify backend for a human approval step between an external content-writing agent and a Facebook Page. It does not research trends or write content, and it has no frontend.
+A small pipeline that turns a scheduled AI agent's daily writing into a Facebook Page post,
+with a human approval step in between.
 
-## Cloudflare migration
+## How a post travels
 
-`worker/` is the new Cloudflare Workers backend and is the version intended for future deployments. It ports the behavior below to a single module Worker backed by Cloudflare KV. `netlify/` remains unchanged as the frozen, battle-tested reference implementation because the Netlify account ran out of credits and can no longer be redeployed. See `worker/README.md` for Cloudflare setup and migration instructions.
+```
+scheduled agent  →  git push  →  GitHub Actions  →  Cloudflare Worker  →  Discord
+   (writes)         (delivery)     (bridge)          (state + publish)    (you approve)
+```
 
-## Flow
+1. **The agent writes.** A scheduled cloud agent reads `content-plan.md`, takes the next topic in
+   order, researches it, and writes a draft JSON file into `drafts/pending/`, then pushes.
+   Its sandbox blocks outbound HTTP, so pushing to git is the only way it can deliver anything —
+   which is why the GitHub Actions bridge exists.
+2. **Actions delivers.** A push touching `drafts/pending/**` runs
+   `scripts/submit-pending-drafts.mjs`, which POSTs each draft to the Worker's `/submit-draft`
+   and moves the file to `drafts/submitted/`.
+3. **The Worker holds it.** The draft is stored in Cloudflare KV and posted to Discord with
+   Approve / Reject buttons.
+4. **You decide.** Approve publishes the caption to the Facebook Page; Reject discards it.
 
-1. Before writing a draft, the external scheduled agent can call `GET /post-history` (same `x-api-key`) to see the last 30 submitted topics, to avoid repeating itself.
-2. The agent sends a finished draft to `POST /submit-draft` with the `x-api-key` header. The function renders a 1080x1080 PNG card, stores the draft in the site-scoped `drafts` Netlify Blobs store, sends the draft plus Approve/Reject buttons to Discord, and appends `{date, title, text}` to the `history` Blobs store (capped at the last 30 entries; best-effort — a history-write failure doesn't fail the submission).
-3. Discord sends button interactions to `POST /discord-interactions`. The function verifies Discord's Ed25519 signature against the untouched raw request body.
-4. Approve calls the shared Facebook publisher, uploads the image and caption to the Page, and deletes the stored draft. Reject deletes the draft without publishing. A Facebook failure is shown in Discord and leaves the draft stored so the action can be retried.
+`drafts/submitted/` means *sent to Discord*, not *published to Facebook*. Nothing reaches the
+Page without a button press.
 
-## Functions
+## Layout
 
-- `netlify/functions/submit-draft.mts` — authenticated integration point for finished drafts.
-- `netlify/functions/post-history.mts` — authenticated read of the last 30 submitted topics, for duplicate avoidance.
-- `netlify/functions/discord-interactions.mts` — Discord ping and button interaction endpoint.
-- `netlify/functions/_shared/facebook.ts` — shared Facebook Graph API photo publisher used by the interaction function.
-- `netlify/functions/_shared/history.ts` — read/append helpers for the `history` Blobs store.
+| Path | What it is |
+| --- | --- |
+| `content-plan.md` | The ordered editorial plan. The agent must follow it; you own it. |
+| `drafts/pending/` | Drafts waiting to be delivered to Discord. |
+| `drafts/submitted/` | Drafts already sent to Discord. |
+| `scripts/submit-pending-drafts.mjs` | The delivery script Actions runs. |
+| `.github/workflows/publish-draft.yml` | Fires on pushes to `drafts/pending/**`. |
+| `worker/` | The Cloudflare Worker — the only live backend. See `worker/README.md`. |
 
-The submit body is:
+## Draft format
 
 ```json
 {
   "text": "The finished Facebook caption",
   "image": {
-    "title": "Card title",
+    "title": "Short topic label",
     "subtitle": "Optional supporting line",
     "sourceUrl": "https://example.com/optional-source"
   }
 }
 ```
 
-## Environment variables
+`text` and `image.title` are required. See `drafts/README.md` for the full contract.
 
-Copy `.env.example` to `.env` for local development and fill in all six values:
+## Images
 
-- `SUBMIT_DRAFT_SECRET`
-- `DISCORD_BOT_TOKEN`
-- `DISCORD_PUBLIC_KEY`
-- `DISCORD_CHANNEL_ID`
-- `FACEBOOK_PAGE_ID`
-- `FACEBOOK_PAGE_ACCESS_TOKEN`
+There are none generated. An earlier version rendered a card image from `image.title` and
+`image.subtitle` via satori + resvg; that rasteriser cannot position Thai tone marks stacked
+above upper vowels, so every card shipped with mangled Thai — `สิ่งที่` came out as `สิงที`.
+Swapping fonts does not fix it; the shaping step is the problem. The renderer was removed
+rather than left to quietly corrupt text. Attach real screenshots by hand instead — which is
+also what the reference pages this one is modelled on actually do.
 
-In production, configure the same values as Netlify environment variables. In the Discord Developer Portal, set the application's Interactions Endpoint URL to `https://YOUR-SITE.netlify.app/discord-interactions`.
+The `image` fields are still carried in the draft JSON: `title` labels the draft in Discord and
+in history, and `sourceUrl` records where a claim came from.
 
-## Local development
+## Repository configuration
 
-Install dependencies and start the Netlify development server:
+The Actions workflow needs both of these set on the repo:
 
-```sh
-npm install
-npx netlify dev
-```
+- Secret `SUBMIT_DRAFT_SECRET` — the API key the Worker expects.
+- Variable `SUBMIT_ENDPOINT` — the Worker's `/submit-draft` URL.
 
-Then call `http://localhost:8888/submit-draft` (the port is printed by the CLI). This project does not use Vite, so local Netlify Blobs access requires `netlify dev`; invoking the source function directly does not configure the local Blob store.
+## History
 
-Run the TypeScript check with:
-
-```sh
-npm run typecheck
-```
-
-Live Discord and Facebook publishing require real credentials and a Discord bot that can send messages and attach files in the configured channel.
-
-## GitHub Actions draft bridge
-
-The scheduled cloud agent cannot make outbound requests to the Netlify domain from its sandbox, but it can commit and push files to GitHub. It writes each finished JSON draft to `drafts/pending/`; the `Publish pending drafts` workflow then sends pending drafts to the already-deployed `/submit-draft` endpoint and moves successful files to `drafts/posted/`. See `drafts/README.md` for the file contract and an example.
-
-Configure these repository settings before using the workflow:
-
-- Actions secret `SUBMIT_DRAFT_SECRET`: the API key expected by the live endpoint.
-- Actions variable `SUBMIT_ENDPOINT`: the full live URL, `https://archemetis-fb-approval.netlify.app/submit-draft`.
+`netlify/` held the original implementation. The Netlify account ran out of credits and could no
+longer deploy — env-var changes need a redeploy to take effect, so the Facebook token could never
+have been wired up there. The backend was ported to Cloudflare Workers and the Netlify copy
+deleted; git history has it if it is ever needed.

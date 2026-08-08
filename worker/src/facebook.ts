@@ -1,5 +1,9 @@
 import type { Env, StoredDraft } from "./types";
-import { base64ToBytes } from "./utils";
+
+// Pin the Graph API version deliberately rather than tracking the default, so a Meta release
+// can't change behaviour under us. Meta retires versions after roughly two years — revisit
+// this before v21 reaches end of life.
+const GRAPH_API_VERSION = "v21.0";
 
 interface FacebookResponse {
   id?: string;
@@ -7,6 +11,8 @@ interface FacebookResponse {
   error?: { message?: string };
 }
 
+// Publishes the caption as a text post. Images are no longer generated (the rasteriser could
+// not render Thai correctly), so any visual is attached by hand on the Page afterwards.
 export async function publishToFacebook(
   env: Env,
   draft: StoredDraft,
@@ -15,14 +21,12 @@ export async function publishToFacebook(
     throw new Error("Facebook publishing is not configured yet");
   }
 
-  const imageBytes = base64ToBytes(draft.imagePng);
   const form = new FormData();
-  form.append("caption", draft.text);
+  form.append("message", draft.text);
   form.append("access_token", env.FACEBOOK_PAGE_ACCESS_TOKEN);
-  form.append("source", new Blob([imageBytes], { type: "image/png" }), "post.png");
 
   const response = await fetch(
-    `https://graph.facebook.com/v21.0/${encodeURIComponent(env.FACEBOOK_PAGE_ID)}/photos`,
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(env.FACEBOOK_PAGE_ID)}/feed`,
     { method: "POST", body: form },
   );
   const result = (await response.json()) as FacebookResponse;

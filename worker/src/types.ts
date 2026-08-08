@@ -11,7 +11,7 @@ export interface Env {
 
 export interface StoredDraft {
   text: string;
-  imagePng: string;
+  title: string;
   createdAt: string;
 }
 
