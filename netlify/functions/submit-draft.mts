@@ -5,6 +5,7 @@ import type { Config, Context } from "@netlify/functions";
 
 import { postDraftToDiscord } from "./_shared/discord.js";
 import { requireEnv } from "./_shared/env.js";
+import { appendHistory } from "./_shared/history.js";
 import { renderCard } from "./_shared/image-card.js";
 import type { StoredDraft } from "./_shared/types.js";
 
@@ -84,6 +85,13 @@ export default async (req: Request, _context: Context): Promise<Response> => {
 
     await store.setJSON(id, draft);
     await postDraftToDiscord(id, body.text, imagePng);
+
+    try {
+      await appendHistory({ date: draft.createdAt, title: body.image.title, text: body.text });
+    } catch (historyError) {
+      // Non-fatal: the draft was already submitted and posted to Discord successfully.
+      console.error("Unable to append post history", historyError);
+    }
 
     return Response.json({ id });
   } catch (error) {

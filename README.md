@@ -4,15 +4,18 @@ This is a small, functions-only Netlify backend for a human approval step betwee
 
 ## Flow
 
-1. The external scheduled agent sends a finished draft to `POST /submit-draft` with the `x-api-key` header. The function renders a 1080x1080 PNG card, stores the draft in the site-scoped `drafts` Netlify Blobs store, and sends the draft plus Approve/Reject buttons to Discord.
-2. Discord sends button interactions to `POST /discord-interactions`. The function verifies Discord's Ed25519 signature against the untouched raw request body.
-3. Approve calls the shared Facebook publisher, uploads the image and caption to the Page, and deletes the stored draft. Reject deletes the draft without publishing. A Facebook failure is shown in Discord and leaves the draft stored so the action can be retried.
+1. Before writing a draft, the external scheduled agent can call `GET /post-history` (same `x-api-key`) to see the last 30 submitted topics, to avoid repeating itself.
+2. The agent sends a finished draft to `POST /submit-draft` with the `x-api-key` header. The function renders a 1080x1080 PNG card, stores the draft in the site-scoped `drafts` Netlify Blobs store, sends the draft plus Approve/Reject buttons to Discord, and appends `{date, title, text}` to the `history` Blobs store (capped at the last 30 entries; best-effort — a history-write failure doesn't fail the submission).
+3. Discord sends button interactions to `POST /discord-interactions`. The function verifies Discord's Ed25519 signature against the untouched raw request body.
+4. Approve calls the shared Facebook publisher, uploads the image and caption to the Page, and deletes the stored draft. Reject deletes the draft without publishing. A Facebook failure is shown in Discord and leaves the draft stored so the action can be retried.
 
 ## Functions
 
 - `netlify/functions/submit-draft.mts` — authenticated integration point for finished drafts.
+- `netlify/functions/post-history.mts` — authenticated read of the last 30 submitted topics, for duplicate avoidance.
 - `netlify/functions/discord-interactions.mts` — Discord ping and button interaction endpoint.
 - `netlify/functions/_shared/facebook.ts` — shared Facebook Graph API photo publisher used by the interaction function.
+- `netlify/functions/_shared/history.ts` — read/append helpers for the `history` Blobs store.
 
 The submit body is:
 

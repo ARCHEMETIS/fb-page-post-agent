@@ -3,3 +3,9 @@ export interface StoredDraft {
   imagePng: string;
   createdAt: string;
 }
+
+export interface HistoryEntry {
+  date: string;
+  title: string;
+  text: string;
+}
