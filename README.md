@@ -21,6 +21,21 @@ scheduled agent  →  git push  →  GitHub Actions  →  Cloudflare Worker  →
    Approve / Reject buttons.
 4. **You decide.** Approve publishes the caption to the Facebook Page; Reject discards it.
 
+Only the configured approver may press those buttons, and only in the configured channel.
+
+### Facebook publishing is deliberately switched off
+
+The publish path is written, hardened and tested as far as it can be without credentials, but
+`FACEBOOK_PAGE_ID` and `FACEBOOK_PAGE_ACCESS_TOKEN` are intentionally unset. Meta developer
+registration could not be completed — its SMS verification never delivered across repeated
+attempts over several days, and the account's email was rejected before that.
+
+Chasing it further was judged not worth it: Page tokens need periodic refresh, App Review keeps
+tightening for small projects, and the whole thing buys about thirty seconds a day over copying
+the finished draft out of Discord by hand. Approve currently reports that publishing is not
+configured and changes nothing. If the account is ever approved, setting those two secrets is
+the only step required.
+
 `drafts/submitted/` means *sent to Discord*, not *published to Facebook*. Nothing reaches the
 Page without a button press.
 
